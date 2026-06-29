@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RefundStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SETTLED
+  FAILED
+}
+
+enum ProviderName {
+  STRIPE
+  PAYPAL
+}
+
+enum RefundReason {
+  FRAUDULENT
+  DUPLICATE
+  PRODUCT_NOT_RECEIVED
+  PRODUCT_DEFECTIVE
+  CUSTOMER_REQUEST
+  OTHER
+}
+
+model Order {
+  id             String        @id @default(cuid())
+  externalId     String        @unique
+  provider       ProviderName
+  amount         Decimal       @db.Decimal(12, 2)
+  currency       String        @default("USD")
+  customerEmail   String
+  customerName   String?
+  createdAt      DateTime      @default(now())
+  refunds        Refund[]
+
+  @@index([provider, externalId])
+}
+
+model Refund {
+  id             String         @id @default(cuid())
+  orderId        String
+  order          Order          @relation(fields: [orderId], references: [id])
+  externalRefundId String?      @unique
+  amount         Decimal        @db.Decimal(12, 2)
+  currency       String         @default("USD")
+  reason         RefundReason
+  status         RefundStatus  @default(PENDING)
+  provider       ProviderName
+  providerRefId  String?
+  idempotencyKey String        @unique
+  agentReviewId  String?
+  agentDecision  String?
+  agentRationale Json?
+  reviewedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  auditEvents     RefundAudit[]
+
+  @@index([status])
+  @@index([orderId])
+}
+
+model RefundAudit {
+  id          String   @id @default(cuid())
+  refundId    String
+  refund      Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  action      String
+  fromStatus  RefundStatus?
+  toStatus    RefundStatus
+  actor       String   @default("system")
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([refundId])
+}
+
+model WebhookEvent {
+  id              String   @id @default(cuid())
+  provider        ProviderName
+  externalEventId String   @unique
+  type            String
+  payload         Json
+  processed       Boolean  @default(false)
+  processedAt     DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([provider, type])
+}

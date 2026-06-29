@@ -1,0 +1,336 @@
+{
+  "info": {
+    "name": "RefundFlow",
+    "_postman_id": "b1f2a3c4-d5e6-7f80-9a0b-1c2d3e4f5a6b",
+    "description": "RefundFlow API collection — full refund lifecycle including AI review, settlement, and Stripe webhook.\n\nImport the OpenAPI spec at {{baseUrl}}/api/openapi.json for the always-up-to-date reference.\n\nVariables:\n- baseUrl: API host (default http://localhost:3527)\n- orderId: set by the 'Seed: ensure order exists' request, used by 'Create refund'\n- refundId: set automatically by the 'Create refund' test script, used by all subsequent requests\n- idempotencyKey: random key generated in 'Create refund' pre-script",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3527", "type": "string" },
+    { "key": "orderId", "value": "", "type": "string" },
+    { "key": "refundId", "value": "", "type": "string" },
+    { "key": "idempotencyKey", "value": "key-postman-0001", "type": "string" }
+  ],
+  "auth": null,
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            }
+          },
+          "response": [
+            {
+              "name": "healthy",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"ok\",\n  \"ts\": \"2026-06-29T10:00:00.000Z\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Refund lifecycle",
+      "item": [
+        {
+          "name": "Seed: ensure order exists",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const order = pm.response.json();",
+                  "  pm.collectionVariables.set('orderId', order.id);",
+                  "  console.log('Created order:', order.id);",
+                  "} else if (pm.response.code === 200) {",
+                  "  const order = pm.response.json();",
+                  "  pm.collectionVariables.set('orderId', order.id);",
+                  "  console.log('Reusing order:', order.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"pi_test_demo_001\",\n  \"provider\": \"STRIPE\",\n  \"amount\": 1000,\n  \"currency\": \"USD\",\n  \"customerEmail\": \"customer@example.com\",\n  \"customerName\": \"Postman Customer\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "orders"]
+            },
+            "description": "Convenience request. RefundFlow has no /api/orders endpoint in the current build — if you get a 404, run `npm run seed` instead and paste the printed orderId into the collection variable."
+          },
+          "response": []
+        },
+        {
+          "name": "Create refund (high-risk)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', 'key-' + Math.random().toString(36).slice(2, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refund created', () => {",
+                  "  pm.expect(pm.response.code).to.eql(201);",
+                  "  const refund = pm.response.json();",
+                  "  pm.expect(refund.status).to.eql('UNDER_REVIEW');",
+                  "  pm.collectionVariables.set('refundId', refund.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"amount\": 750,\n  \"currency\": \"USD\",\n  \"reason\": \"PRODUCT_NOT_RECEIVED\",\n  \"idempotencyKey\": \"{{idempotencyKey}}\",\n  \"provider\": \"STRIPE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds"]
+            },
+            "description": "Amount 750 >= 500 threshold → status UNDER_REVIEW (AI agent will be triggered next)."
+          },
+          "response": [
+            {
+              "name": "under_review",
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"id\": \"ckrefund0001\",\n  \"orderId\": \"ckabc1234567890xyz\",\n  \"amount\": 750,\n  \"currency\": \"USD\",\n  \"reason\": \"PRODUCT_NOT_RECEIVED\",\n  \"status\": \"UNDER_REVIEW\",\n  \"provider\": \"STRIPE\",\n  \"providerRefId\": null,\n  \"agentDecision\": null,\n  \"agentRationale\": null,\n  \"reviewedAt\": null,\n  \"createdAt\": \"2026-06-29T10:00:00.000Z\",\n  \"updatedAt\": \"2026-06-29T10:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get refund by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds/{{refundId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds", "{{refundId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List refunds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger AI review",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('review completed', () => {",
+                  "  pm.expect([200, 422]).to.include(pm.response.code);",
+                  "  if (pm.response.code === 200) {",
+                  "    const refund = pm.response.json();",
+                  "    pm.expect(refund.agentDecision).to.be.oneOf(['APPROVE', 'REJECT']);",
+                  "    pm.expect(refund.agentRationale).to.not.be.null;",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds/{{refundId}}/review",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds", "{{refundId}}", "review"]
+            },
+            "description": "Calls OpenAI. Requires OPENAI_API_KEY set on the server. If the agent returns APPROVE, status becomes APPROVED; REJECT or NEEDS_HUMAN → REJECTED."
+          },
+          "response": []
+        },
+        {
+          "name": "Manually approve (admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds/{{refundId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds", "{{refundId}}", "approve"]
+            },
+            "description": "Use to move a PENDING or UNDER_REVIEW refund to APPROVED without the agent."
+          },
+          "response": []
+        },
+        {
+          "name": "Settle via provider",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('settle handled', () => {",
+                  "  pm.expect([200, 422, 502]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds/{{refundId}}/settle",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds", "{{refundId}}", "settle"]
+            },
+            "description": "Requires the refund to be APPROVED and STRIPE_SECRET_KEY configured on the server. Calls Stripe Refunds API with the forwarded idempotencyKey."
+          },
+          "response": []
+        },
+        {
+          "name": "Manually reject (admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/refunds/{{refundId}}/reject",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "refunds", "{{refundId}}", "reject"]
+            },
+            "description": "Transitions PENDING/UNDER_REVIEW → REJECTED (terminal)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Stripe webhook receiver",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "stripe-signature", "value": "t={{ts}},v1={{sig}}", "type": "text" },
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/stripe",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "webhooks", "stripe"]
+            },
+            "description": "For local testing use `stripe listen --forward-to {{baseUrl}}/api/webhooks/stripe` so Stripe CLI computes a valid signature. Sending a raw body from Postman directly will fail signature verification unless you compute the HMAC yourself."
+          },
+          "response": [
+            {
+              "name": "processed",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"processed\"\n}"
+            },
+            {
+              "name": "duplicate",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"already_processed\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tRPC",
+      "item": [
+        {
+          "name": "createRefund (tRPC)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"json\": {\n    \"orderId\": \"{{orderId}}\",\n    \"amount\": 750,\n    \"currency\": \"USD\",\n    \"reason\": \"PRODUCT_NOT_RECEIVED\",\n    \"idempotencyKey\": \"trpc-{{idempotencyKey}}\",\n    \"provider\": \"STRIPE\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/trpc/refunds.createRefund",
+              "host": ["{{baseUrl}}"],
+              "path": ["trpc", "refunds.createRefund"]
+            },
+            "description": "tRPC v11 link transport: input wrapped in { json: ... }. Response shape: { result: { data: { json: <RefundWithOrder> } } }."
+          },
+          "response": []
+        },
+        {
+          "name": "getRefund (tRPC)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/trpc/refunds.getRefund?input=%7B%22json%22%3A%7B%22id%22%3A%22{{refundId}}%22%7D%7D",
+              "host": ["{{baseUrl}}"],
+              "path": ["trpc", "refunds.getRefund"],
+              "query": [
+                { "key": "input", "value": "%7B%22json%22%3A%7B%22id%22%3A%22{{refundId}}%22%7D%7D" }
+              ]
+            },
+            "description": "tRPC queries pass input as a URL-encoded JSON string."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
